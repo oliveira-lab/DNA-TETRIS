@@ -17,7 +17,7 @@ A unique twist on the classic Tetris game, blending the mechanics of falling blo
 
 ## Game Concept
 
-"DNA Tetris" reimagines Tetris by incorporating elements of molecular biology. Instead of just stacking blocks to clear lines, players arrange falling pieces labeled with DNA bases (A, T, C, G) and a special Methylation (M) piece. The goal is to create complementary base pairs (A-T, C-G) to score points, while the M piece introduces a disruptive twist inspired by epigenetic modifications. The game combines strategic block placement with a biological twist, making it both educational and entertaining. It was built as a collaborating effort betwwen Grok 3 AI (Tetris game structure) + Oliveira Lab (logic of DNA base complementarity + methylation implementation).
+"DNA Tetris" reimagines Tetris by incorporating elements of molecular biology. Instead of just stacking blocks to clear lines, players arrange falling pieces labeled with DNA bases (A, T, C, G) and a special Methylation (M) piece. The goal is to create complementary base pairs (A-T, C-G) to score points, while the M piece introduces a disruptive twist inspired by epigenetic modifications. The game combines strategic block placement with a biological twist, making it both educational and entertaining. It was built as a collaborating effort between Grok 3 AI (Tetris game structure) + Oliveira Lab (logic of DNA base complementarity + methylation implementation).
 
 ---
 
