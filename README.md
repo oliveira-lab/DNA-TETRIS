@@ -64,4 +64,4 @@ This gamified approach introduces players to basic genetic concepts while mainta
 
 1. **Clone the Repository**:
    ```bash
-   git clone https://github.com/your-username/dna-tetris.git
+   git clone https://github.com/oliveira-lab/dna-tetris.git
