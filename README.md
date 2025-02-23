@@ -1,7 +1,8 @@
 # DNA-TETRIS
 A unique twist on the classic Tetris game, blending the mechanics of falling blocks with the science of DNA base pairing and methylation.
 
-![DNA Tetris Screenshot](screenshot.jpg)
+<img src="screenshot.jpg" alt="DNA Tetris Screenshot" width="300">
+
 
 ---
 
