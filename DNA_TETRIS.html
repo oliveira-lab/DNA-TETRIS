@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DNA Tetris</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #000;
+      overflow: hidden;
+      height: 100%;
+    }
+    .game-container {
+      position: absolute;
+      width: 1512px;
+      height: 982px;
+      transform-origin: top left;
+      visibility: hidden; /* Hide initially to prevent shift */
+    }
+    .game-container.visible {
+      visibility: visible; /* Show after resize */
+    }
+    #gameCanvas {
+      position: absolute;
+      left: 606px;
+      top: 251px;
+      box-shadow: 0 0 15px #0f0, 0 0 30px #0f0, 0 0 45px #0f0;
+    }
+    #titleCanvas {
+      position: absolute;
+      left: 556px;
+      top: 131px;
+    }
+    #nextPieceCanvas {
+      position: absolute;
+      left: 916px;
+      top: 251px;
+    }
+    #scoreCanvas {
+      position: absolute;
+      left: 916px;
+      top: 361px;
+    }
+    #levelCanvas {
+      position: absolute;
+      left: 916px;
+      top: 421px;
+    }
+    canvas {
+      background-color: #000;
+      border: none;
+    }
+    #gameCanvas:focus {
+      outline: 2px solid #0f0;
+      box-shadow: 0 0 15px #0f0, 0 0 30px #0f0, 0 0 2px #0f0;
+    }
+    #gameCanvas.unfocused {
+      filter: blur(2px);
+    }
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="game-container">
+    <canvas id="titleCanvas" width="400" height="100"></canvas>
+    <canvas id="gameCanvas" width="300" height="600" tabindex="0"></canvas>
+    <canvas id="nextPieceCanvas" width="100" height="100"></canvas>
+    <canvas id="scoreCanvas" width="150" height="50"></canvas>
+    <canvas id="levelCanvas" width="100" height="50"></canvas>
+  </div>
+
+  <script>
+    const DESIGN_WIDTH = 1512, DESIGN_HEIGHT = 982;
+    const MAX_SCALE = Math.min(3024 / DESIGN_WIDTH, 1964 / DESIGN_HEIGHT);
+
+    function resizeGame() {
+      const scale = Math.min(window.innerWidth / DESIGN_WIDTH, window.innerHeight / DESIGN_HEIGHT, MAX_SCALE);
+      const container = document.querySelector('.game-container');
+      container.style.transform = `scale(${scale})`;
+      container.style.left = `${(window.innerWidth - DESIGN_WIDTH * scale) / 2}px`;
+      container.style.top = `${(window.innerHeight - DESIGN_HEIGHT * scale) / 2}px`;
+      container.classList.add('visible'); // Show container after resize
+      ensureFocus();
+    }
+
+    window.addEventListener('resize', resizeGame);
+
+    const titleCanvas = document.getElementById('titleCanvas');
+    const titleCtx = titleCanvas.getContext('2d');
+    const gameCanvas = document.getElementById('gameCanvas');
+    const gameCtx = gameCanvas.getContext('2d');
+    const nextCanvas = document.getElementById('nextPieceCanvas');
+    const nextCtx = nextCanvas.getContext('2d');
+    const scoreCanvas = document.getElementById('scoreCanvas');
+    const scoreCtx = scoreCanvas.getContext('2d');
+    const levelCanvas = document.getElementById('levelCanvas');
+    const levelCtx = levelCanvas.getContext('2d');
+
+    const BLOCK_SIZE = 30;
+    const COLS = gameCanvas.width / BLOCK_SIZE;
+    const ROWS = gameCanvas.height / BLOCK_SIZE;
+
+    const SHAPES = {
+      I: [[1, 1, 1, 1]],
+      O: [[1, 1], [1, 1]],
+      T: [[0, 1, 0], [1, 1, 1]],
+      S: [[0, 1, 1], [1, 1, 0]],
+      Z: [[1, 1, 0], [0, 1, 1]],
+      J: [[1, 0, 0], [1, 1, 1]],
+      L: [[0, 0, 1], [1, 1, 1]],
+      M: [[1]]
+    };
+
+    const BASES = ['A', 'T', 'C', 'G', 'M'];
+    const COLORS = {
+      'A': '#F1C40F',
+      'T': '#5DADE2',
+      'C': '#FF6F61',
+      'G': '#58D68D',
+      'M': '#ECF0F1'
+    };
+
+    const sounds = {
+      move: new Audio('https://freesound.org/data/previews/270/270404_1675716-lq.mp3'),
+      match: new Audio('https://freesound.org/data/previews/341/341695_5858296-lq.mp3'),
+      gameover: new Audio('https://freesound.org/data/previews/211/211617_71257-lq.mp3')
+    };
+    sounds.move.onerror = () => console.error('Failed to load move sound');
+    sounds.match.onerror = () => console.error('Failed to load match sound');
+    sounds.gameover.onerror = () => console.error('Failed to load gameover sound');
+
+    let board = Array(ROWS).fill().map(() => Array(COLS).fill(null));
+    let currentPiece;
+    let nextPiece;
+    let pieceX, pieceY;
+    let score = 0;
+    let level = 1;
+    let gameOver = false;
+    let fallAnimation = false;
+    let fallTimer = 0;
+    let paused = true;
+    let gameStarted = false;
+    const FALL_DELAY = 50;
+
+    class Piece {
+      constructor() {
+        const shapeKeys = Object.keys(SHAPES);
+        const isMethylation = Math.random() < 0.1;
+        const randomShape = isMethylation ? 'M' : shapeKeys[Math.floor(Math.random() * (shapeKeys.length - 1))];
+        this.shape = SHAPES[randomShape].map(row => [...row]);
+        this.base = isMethylation ? 'M' : BASES[Math.floor(Math.random() * 4)];
+        this.color = COLORS[this.base];
+      }
+      rotate() {
+        if (this.base === 'M') return;
+        const rows = this.shape.length;
+        const cols = this.shape[0].length;
+        const newShape = Array(cols).fill().map(() => Array(rows).fill(0));
+        for (let y = 0; y < rows; y++) {
+          for (let x = 0; x < cols; x++) {
+            newShape[x][rows - 1 - y] = this.shape[y][x];
+          }
+        }
+        const oldShape = this.shape;
+        this.shape = newShape;
+        if (!canMove(0, 0)) {
+          this.shape = oldShape;
+        }
+      }
+    }
+
+    function spawnPiece() {
+      if (!nextPiece) {
+        nextPiece = new Piece();
+      }
+      currentPiece = nextPiece;
+      nextPiece = new Piece();
+      pieceX = Math.floor(COLS / 2) - Math.floor(currentPiece.shape[0].length / 2);
+      pieceY = 0;
+      if (!canMove(0, 0)) {
+        gameOver = true;
+        sounds.gameover.play();
+      }
+      drawNextPiece();
+      drawUI();
+    }
+
+    function canMove(dx, dy) {
+      for (let y = 0; y < currentPiece.shape.length; y++) {
+        for (let x = 0; x < currentPiece.shape[y].length; x++) {
+          if (currentPiece.shape[y][x]) {
+            const newX = pieceX + x + dx;
+            const newY = pieceY + y + dy;
+            if (newX < 0 || newX >= COLS || newY >= ROWS || (newY >= 0 && board[newY][newX])) {
+              return false;
+            }
+          }
+        }
+      }
+      return true;
+    }
+
+    function mergePiece() {
+      for (let y = 0; y < currentPiece.shape.length; y++) {
+        for (let x = 0; x < currentPiece.shape[y].length; x++) {
+          if (currentPiece.shape[y][x]) {
+            board[pieceY + y][pieceX + x] = currentPiece.base;
+          }
+        }
+      }
+      if (currentPiece.base === 'M') {
+        clearSurroundingPieces(pieceX, pieceY);
+        board[pieceY][pieceX] = null;
+        fallAnimation = true;
+        fallTimer = 0;
+      }
+    }
+
+    function clearSurroundingPieces(x, y) {
+      const directions = [[-1, -1], [-1, 0], [-1, 1], [0, -1], [0, 1], [1, -1], [1, 0], [1, 1]];
+      for (const [dy, dx] of directions) {
+        const newY = y + dy;
+        const newX = x + dx;
+        if (newY >= 0 && newY < ROWS && newX >= 0 && newX < COLS && board[newY][newX]) {
+          board[newY][newX] = null;
+          score += 5;
+        }
+      }
+      sounds.match.play();
+    }
+
+    function checkComplements() {
+      let matchesFound = false;
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS - 1; x++) {
+          if (isComplement(board[y][x], board[y][x + 1])) {
+            board[y][x] = null;
+            board[y][x + 1] = null;
+            score += 10;
+            matchesFound = true;
+          }
+        }
+      }
+      for (let y = 0; y < ROWS - 1; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (isComplement(board[y][x], board[y + 1][x])) {
+            board[y][x] = null;
+            board[y + 1][x] = null;
+            score += 10;
+            matchesFound = true;
+          }
+        }
+      }
+      if (matchesFound) {
+        sounds.match.play();
+        fallAnimation = true;
+        fallTimer = 0;
+      }
+    }
+
+    function isComplement(base1, base2) {
+      return (base1 === 'A' && base2 === 'T') || (base1 === 'T' && base2 === 'A') ||
+             (base1 === 'C' && base2 === 'G') || (base1 === 'G' && base2 === 'C');
+    }
+
+    function applyGravityStep() {
+      let moved = false;
+      for (let x = 0; x < COLS; x++) {
+        for (let y = ROWS - 2; y >= 0; y--) {
+          if (board[y][x] && !board[y + 1][x]) {
+            board[y + 1][x] = board[y][x];
+            board[y][x] = null;
+            moved = true;
+          }
+        }
+      }
+      return moved;
+    }
+
+    function checkAndClearMatches() {
+      let matchesFound;
+      do {
+        matchesFound = false;
+        for (let y = 0; y < ROWS; y++) {
+          for (let x = 0; x < COLS - 1; x++) {
+            if (isComplement(board[y][x], board[y][x + 1])) {
+              board[y][x] = null;
+              board[y][x + 1] = null;
+              score += 10;
+              matchesFound = true;
+            }
+          }
+        }
+        for (let y = 0; y < ROWS - 1; y++) {
+          for (let x = 0; x < COLS; x++) {
+            if (isComplement(board[y][x], board[y + 1][x])) {
+              board[y][x] = null;
+              board[y + 1][x] = null;
+              score += 10;
+              matchesFound = true;
+            }
+          }
+        }
+        if (matchesFound) {
+          sounds.match.play();
+          while (applyGravityStep()) {
+            draw();
+          }
+          removeEmptyRows();
+        }
+      } while (matchesFound);
+    }
+
+    function removeEmptyRows() {
+      for (let y = ROWS - 1; y >= 0; y--) {
+        if (board[y].every(cell => !cell)) {
+          board.splice(y, 1);
+          board.unshift(Array(COLS).fill(null));
+          score += 20;
+        }
+      }
+    }
+
+    function updateLevel() {
+      level = Math.min(15, Math.floor(score / 2500) + 1);
+    }
+
+    function drawTitle() {
+      titleCtx.clearRect(0, 0, titleCanvas.width, titleCanvas.height);
+      drawBrickWall(titleCtx, 0, 0, titleCanvas.width, titleCanvas.height);
+      titleCtx.fillStyle = '#000';
+      titleCtx.fillRect(8, 8, titleCanvas.width - 16, titleCanvas.height - 16);
+      titleCtx.font = '40px "Orbitron", "Courier New", monospace';
+      titleCtx.textAlign = 'center';
+      titleCtx.fillStyle = '#0f0';
+      titleCtx.shadowColor = '#0f0';
+      titleCtx.shadowBlur = 10;
+      titleCtx.fillText('DNA TETRIS', titleCanvas.width / 2, 60);
+      titleCtx.shadowBlur = 0;
+    }
+
+    function drawNextPiece() {
+      nextCtx.clearRect(0, 0, nextCanvas.width, nextCanvas.height);
+      drawBrickWall(nextCtx, 0, 0, nextCanvas.width, nextCanvas.height);
+      nextCtx.fillStyle = '#000';
+      nextCtx.fillRect(8, 8, nextCanvas.width - 16, nextCanvas.height - 16);
+      for (let y = 0; y < nextPiece.shape.length; y++) {
+        for (let x = 0; x < nextPiece.shape[y].length; x++) {
+          if (nextPiece.shape[y][x]) {
+            nextCtx.fillStyle = nextPiece.color;
+            nextCtx.fillRect(x * 20 + 20, y * 20 + 20, 18, 18);
+            nextCtx.fillStyle = 'black';
+            nextCtx.font = '12px "Courier New"';
+            nextCtx.textAlign = 'center';
+            nextCtx.fillText(nextPiece.base, x * 20 + 29, y * 20 + 33);
+          }
+        }
+      }
+    }
+
+    function drawUI() {
+      scoreCtx.clearRect(0, 0, scoreCanvas.width, scoreCanvas.height);
+      drawBrickWall(scoreCtx, 0, 0, scoreCanvas.width, scoreCanvas.height);
+      scoreCtx.fillStyle = '#000';
+      scoreCtx.fillRect(8, 8, scoreCanvas.width - 16, scoreCanvas.height - 16);
+      scoreCtx.fillStyle = '#0f0';
+      scoreCtx.font = '16px "Courier New"';
+      scoreCtx.textAlign = 'left';
+      scoreCtx.fillText(`SCORE ${score}`, 10, 35);
+
+      levelCtx.clearRect(0, 0, levelCanvas.width, levelCanvas.height);
+      drawBrickWall(levelCtx, 0, 0, levelCanvas.width, levelCanvas.height);
+      levelCtx.fillStyle = '#000';
+      levelCtx.fillRect(8, 8, levelCanvas.width - 16, levelCanvas.height - 16);
+      levelCtx.fillStyle = '#0f0';
+      levelCtx.font = '16px "Courier New"';
+      levelCtx.textAlign = 'left';
+      levelCtx.fillText(`LEVEL ${level}`, 10, 35);
+    }
+
+    function draw() {
+      gameCtx.clearRect(0, 0, gameCanvas.width, gameCanvas.height);
+      drawBrickWall(gameCtx, 0, 0, gameCanvas.width, gameCanvas.height);
+      gameCtx.fillStyle = '#000';
+      gameCtx.fillRect(8, 8, gameCanvas.width - 16, gameCanvas.height - 16);
+
+      for (let y = 0; y < ROWS; y++) {
+        for (let x = 0; x < COLS; x++) {
+          if (board[y][x]) {
+            gameCtx.fillStyle = COLORS[board[y][x]];
+            gameCtx.fillRect(x * BLOCK_SIZE + 8, y * BLOCK_SIZE + 8, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+            gameCtx.fillStyle = 'black';
+            gameCtx.font = '16px "Courier New"';
+            gameCtx.textAlign = 'center';
+            gameCtx.fillText(board[y][x], x * BLOCK_SIZE + BLOCK_SIZE/2 + 8, y * BLOCK_SIZE + BLOCK_SIZE/1.5 + 8);
+          }
+        }
+      }
+
+      if (currentPiece && gameStarted) {
+        for (let y = 0; y < currentPiece.shape.length; y++) {
+          for (let x = 0; x < currentPiece.shape[y].length; x++) {
+            if (currentPiece.shape[y][x]) {
+              gameCtx.fillStyle = currentPiece.color;
+              gameCtx.fillRect((pieceX + x) * BLOCK_SIZE + 8, (pieceY + y) * BLOCK_SIZE + 8, BLOCK_SIZE - 4, BLOCK_SIZE - 4);
+              gameCtx.fillStyle = 'black';
+              gameCtx.font = '16px "Courier New"';
+              gameCtx.textAlign = 'center';
+              gameCtx.fillText(currentPiece.base, (pieceX + x) * BLOCK_SIZE + BLOCK_SIZE/2 + 8, (pieceY + y) * BLOCK_SIZE + BLOCK_SIZE/1.5 + 8);
+            }
+          }
+        }
+      }
+
+      drawTitle();
+      drawNextPiece();
+      drawUI();
+
+      if (!gameStarted) {
+        const lines = ['PRESS ANY KEY', 'OR CLICK TO START'];
+        const lineHeight = 24;
+        const totalHeight = lines.length * lineHeight;
+        let y = (gameCanvas.height - totalHeight) / 2 + lineHeight / 2;
+
+        gameCtx.fillStyle = '#0f0';
+        gameCtx.font = '20px "Courier New"';
+        gameCtx.textAlign = 'center';
+        lines.forEach(line => {
+          gameCtx.fillText(line, gameCanvas.width / 2, y);
+          y += lineHeight;
+        });
+      } else if (paused) {
+        gameCtx.fillStyle = '#0f0';
+        gameCtx.font = '30px "Courier New"';
+        gameCtx.textAlign = 'center';
+        gameCtx.fillText('PAUSED', gameCanvas.width / 2, gameCanvas.height / 2);
+      }
+    }
+
+    function update() {
+      if (gameOver) {
+        alert('Game Over! Score: ' + score);
+        return;
+      }
+
+      if (!paused) {
+        if (fallAnimation) {
+          fallTimer += FALL_DELAY;
+          if (fallTimer >= 50) {
+            if (!applyGravityStep()) {
+              fallAnimation = false;
+              checkAndClearMatches();
+              updateLevel();
+            }
+            fallTimer = 0;
+          }
+        } else if (canMove(0, 1)) {
+          pieceY++;
+        } else {
+          mergePiece();
+          checkComplements();
+          spawnPiece();
+        }
+      }
+
+      draw();
+      if (!gameOver && gameStarted) {
+        const speed = Math.max(300, 1200 - (level * 5));
+        setTimeout(update, speed);
+      }
+    }
+
+    function ensureFocus() {
+      if (document.activeElement !== gameCanvas) {
+        gameCanvas.focus();
+        gameCanvas.classList.remove('unfocused');
+      }
+    }
+
+    document.addEventListener('keydown', (e) => {
+      if (!gameStarted) {
+        gameStarted = true;
+        paused = false;
+        ensureFocus();
+        update();
+      } else {
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+          e.preventDefault();
+        }
+        if (e.key === 'p' || e.key === 'P') {
+          paused = !paused;
+          if (!paused && !gameOver) {
+            update();
+          }
+          draw();
+          return;
+        }
+        if (gameOver || paused) return;
+        switch (e.key) {
+          case 'ArrowLeft':
+            if (canMove(-1, 0)) pieceX--;
+            sounds.move.play();
+            break;
+          case 'ArrowRight':
+            if (canMove(1, 0)) pieceX++;
+            sounds.move.play();
+            break;
+          case 'ArrowDown':
+            if (canMove(0, 1)) pieceY++;
+            sounds.move.play();
+            break;
+          case 'Shift':
+            currentPiece.rotate();
+            sounds.move.play();
+            break;
+        }
+      }
+      draw();
+    });
+
+    document.addEventListener('click', () => {
+      if (!gameStarted) {
+        gameStarted = true;
+        paused = false;
+        ensureFocus();
+        update();
+      } else {
+        ensureFocus();
+      }
+    });
+
+    window.addEventListener('load', () => {
+      resizeGame(); // Resize first
+      spawnPiece();
+      draw(); // Draw after resize
+      ensureFocus();
+    });
+
+    gameCanvas.addEventListener('blur', () => {
+      gameCanvas.classList.add('unfocused');
+    });
+    gameCanvas.addEventListener('focus', () => {
+      gameCanvas.classList.remove('unfocused');
+    });
+
+    function drawBrickWall(ctx, x, y, width, height) {
+      ctx.fillStyle = '#666';
+      ctx.strokeStyle = '#666';
+      ctx.lineWidth = 8;
+      for (let i = 0; i < height; i += 20) {
+        for (let j = 0; j < width; j += 20) {
+          if ((i / 20 + j / 20) % 2 === 0) {
+            ctx.fillRect(x + j, y + i, 20, 20);
+            ctx.fillStyle = '#444';
+            ctx.fillRect(x + j + 4, y + i + 4, 12, 12);
+          }
+        }
+      }
+      ctx.strokeRect(x, y, width, height);
+      ctx.fillStyle = '#666';
+    }
+  </script>
+</body>
+</html>
